@@ -1,0 +1,29 @@
+{
+  "name": "agent-bridge-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the Serial Port Terminal AgentBridge: persistent subscription with a cursor-based line buffer, so agent command cycles never lose device logs",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "agent-bridge-mcp": "dist/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "compile:test": "tsc -p tsconfig.test.json",
+    "test": "npm run compile:test && node --test \"out-test/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
