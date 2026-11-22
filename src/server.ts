@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 // agent-bridge-mcp 入口：stdio MCP 服务器（doc/设计.md §2/§9）。
-// P0 骨架：配置解析 + 启动日志 + 空工具表的 stdio 会话——bridgeClient 与工具装配
-// 随批次②补入。stdout 被 MCP 协议独占，一切日志走 stderr（§7.1 红线）。
+// 装配：配置解析 → RingBuffer + BridgeClient（持久订阅，断线重连）→ 工具注册 →
+// stdio 会话。stdout 被 MCP 协议独占，一切日志走 stderr（§7.1 红线）。
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { BridgeClient } from './bridgeClient';
 import { resolveConfig, UsageError } from './config';
+import { RingBuffer } from './lineBuffer';
+import { registerTools } from './tools';
 
 const VERSION = '0.1.0'; // 与 package.json 同步维护（npm 发版前核对）
 
@@ -31,8 +34,21 @@ async function main(): Promise<void> {
     `maxLines=${config.maxLines} maxBytes=${config.maxBytes})`
   );
 
+  const ring = new RingBuffer({ maxLines: config.maxLines, maxBytes: config.maxBytes });
+  const bridge = new BridgeClient(config.host, config.port);
+  bridge.on('status', connected => {
+    log(connected ? `bridge connected (${config.host}:${config.port})` : 'bridge disconnected (reconnecting)');
+  });
+  bridge.on('error', error => {
+    log(`bridge error: ${error.message}`);
+  });
+  bridge.on('line', line => {
+    ring.push(line);
+  });
+  bridge.start();
+
   const server = new McpServer({ name: 'agent-bridge-mcp', version: VERSION });
-  // 工具装配随批次②补入；当前 ListTools 返回空表。
+  registerTools(server, { bridge, ring, readonly: config.readonly, host: config.host, port: config.port });
   await server.connect(new StdioServerTransport());
   log('stdio transport connected');
 }
