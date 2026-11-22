@@ -19,8 +19,8 @@ interface ToolResult {
   isError?: boolean;
 }
 
-const makePair = async (options: { readonly?: boolean; maxLines?: number; lines?: string[] } = {}) => {
-  const ring = new RingBuffer({ maxLines: options.maxLines ?? 100, maxBytes: 10_000_000 });
+const makePair = async (options: { readonly?: boolean; maxBytes?: number; lines?: string[] } = {}) => {
+  const ring = new RingBuffer({ maxBytes: options.maxBytes ?? 10_000_000 });
   for (const line of options.lines ?? []) {
     ring.push(line);
   }
@@ -43,7 +43,7 @@ const payload = (result: ToolResult): Record<string, unknown> => JSON.parse(resu
 describe('MCP 工具（read_output / send_line / status）', () => {
   it('#8 tolerates over-limit and negative parameters without error', async () => {
     const lines = Array.from({ length: 1500 }, (_, i) => `line-${i + 1}`);
-    const { client } = await makePair({ lines, maxLines: 5000 });
+    const { client } = await makePair({ lines, maxBytes: 1_000_000 });
     // max_lines 99999 → 收敛 1000：恰好返回 1000 行（可观测的收敛断言）
     const capped = await callTool(client, 'read_output', { max_lines: 99999 });
     assert.equal(capped.isError, undefined);

@@ -80,8 +80,7 @@ MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `np
 | `--host` | `AGENT_BRIDGE_HOST` | `127.0.0.1` | AgentBridge 监听地址 |
 | `--port` | `AGENT_BRIDGE_PORT` | `2000` | AgentBridge 端口 |
 | `--readonly` | `AGENT_BRIDGE_READONLY` | 关 | 声明只读：不注册 `send_line`（见下安全说明） |
-| `--max-lines` | — | `5000` | 缓冲行数上限（超出从最旧淘汰，读取结果以 `dropped` 诚实报告） |
-| `--max-bytes` | — | `1048576` | 缓冲字节上限（utf8） |
+| `--max-bytes` | — | `1048576` | 缓冲字节上限（utf8 计；超出从最旧行淘汰，读取结果以 `dropped` 诚实报告） |
 
 重启后缓冲回归默认（无长期存储——虚拟/调试用途定位，不需要跨会话保留）。
 

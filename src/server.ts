@@ -31,10 +31,10 @@ async function main(): Promise<void> {
   }
   log(
     `v${VERSION} starting (name=${config.name} host=${config.host} port=${config.port} readonly=${config.readonly} ` +
-    `maxLines=${config.maxLines} maxBytes=${config.maxBytes})`
+    `maxBytes=${config.maxBytes})`
   );
 
-  const ring = new RingBuffer({ maxLines: config.maxLines, maxBytes: config.maxBytes });
+  const ring = new RingBuffer({ maxBytes: config.maxBytes });
   const bridge = new BridgeClient(config.host, config.port);
   bridge.on('status', connected => {
     log(connected ? `bridge connected (${config.host}:${config.port})` : 'bridge disconnected (reconnecting)');

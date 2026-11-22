@@ -36,7 +36,7 @@ describe('LineAssembler（行组装）', () => {
 
 describe('RingBuffer（环形缓冲与游标）', () => {
   it('#4 keeps seq monotonically increasing across assembler instances', () => {
-    const ring = new RingBuffer({ maxLines: 100, maxBytes: 1_000_000 });
+    const ring = new RingBuffer({ maxBytes: 1_000_000 });
     const first = new LineAssembler();
     for (const line of first.push('a\n')) {
       ring.push(line);
@@ -54,24 +54,25 @@ describe('RingBuffer（环形缓冲与游标）', () => {
     assert.equal(result.newest, 2);
   });
 
-  it('#5 evicts from the oldest beyond max-lines', () => {
-    const ring = new RingBuffer({ maxLines: 3, maxBytes: 1_000_000 });
+  it('#5 evicts from the oldest beyond the byte limit', () => {
+    const ring = new RingBuffer({ maxBytes: 12 });
     for (const text of ['l1', 'l2', 'l3', 'l4', 'l5']) {
-      ring.push(text);
+      ring.push(text); // 2B × 5 = 10B ≤ 12B：未淘汰
     }
-    assert.equal(ring.droppedTotal(), 2);
-    const result = ring.readSince(1, 100);
+    ring.push('l6x'); // 3B → 13 > 12 → 淘汰 seq1 → 11B
+    assert.equal(ring.droppedTotal(), 1);
+    const result = ring.readSince(0, 100);
     assert.deepEqual(
       result.lines.map(line => line.text),
-      ['l3', 'l4', 'l5']
+      ['l2', 'l3', 'l4', 'l5', 'l6x']
     );
-    // seen up to seq 1；被淘汰且未见的 = seq 2 → dropped 1
+    // since=0 早于 oldest=2：缺口 = seq 1 → dropped 1
     assert.equal(result.dropped, 1);
-    assert.equal(result.oldest, 3);
+    assert.equal(result.oldest, 2);
   });
 
   it('#6 evicts beyond the byte limit with utf8 accounting', () => {
-    const ring = new RingBuffer({ maxLines: 100, maxBytes: 12 });
+    const ring = new RingBuffer({ maxBytes: 12 });
     ring.push('aaaaaa'); // 6B → 6
     ring.push('bbbbbb'); // 6B → 12
     ring.push('中'); // 3B → 15 > 12 → 淘汰 seq1（6B）→ 9
@@ -84,7 +85,7 @@ describe('RingBuffer（环形缓冲与游标）', () => {
   });
 
   it('#7 reports cursor boundary gaps honestly', () => {
-    const ring = new RingBuffer({ maxLines: 3, maxBytes: 1_000_000 });
+    const ring = new RingBuffer({ maxBytes: 6 }); // 2B × 3 = 6B：推 5 行淘汰前 2 行
     for (const text of ['l1', 'l2', 'l3', 'l4', 'l5']) {
       ring.push(text);
     }
@@ -100,7 +101,7 @@ describe('RingBuffer（环形缓冲与游标）', () => {
     const future = ring.readSince(9, 100);
     assert.deepEqual(future.lines, []);
     // 空缓冲：oldest = 下一 seq、newest = 已分配最大 seq
-    const empty = new RingBuffer({ maxLines: 10, maxBytes: 1_000_000 });
+    const empty = new RingBuffer({ maxBytes: 1_000_000 });
     const none = empty.readSince(0, 100);
     assert.deepEqual(none.lines, []);
     assert.equal(none.oldest, 1);

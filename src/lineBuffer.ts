@@ -2,8 +2,8 @@
 // - LineAssembler：按 \n 切分上游 chunk，尾段保留等待续行（吸收桥 200ms 半行刷出）；
 //   每完整行剥离一个行尾 \r（桥下行 CRLF，模型侧文本无需保留）。flush() 将残留半行
 //   刷出为独立行（断线收尾 §3.4——重连后组装从零开始，宁拆两行不错拼）。
-// - RingBuffer：单调 seq（从 1 起，跨上游重连连续）+ 双上限淘汰（行数 / utf8 字节，
-//   从最旧淘汰，至少保留最新一行——单行超上限时不自我清空）+ dropped 诚实统计。
+// - RingBuffer：单调 seq（从 1 起，跨上游重连连续）+ utf8 字节单上限淘汰（从最旧
+//   淘汰，至少保留最新一行——单行超上限时不自我清空）+ dropped 诚实统计。
 
 export interface BufferLine {
   seq: number;
@@ -38,7 +38,6 @@ export class LineAssembler {
 }
 
 export interface RingBufferOptions {
-  maxLines: number;
   maxBytes: number;
 }
 
@@ -51,11 +50,9 @@ export class RingBuffer {
   private nextSeq = 1;
   private bytes = 0;
   private droppedCount = 0;
-  private readonly maxLines: number;
   private readonly maxBytes: number;
 
   constructor(options: RingBufferOptions) {
-    this.maxLines = options.maxLines;
     this.maxBytes = options.maxBytes;
   }
 
@@ -66,7 +63,7 @@ export class RingBuffer {
     this.entries.push({ seq, text: line });
     this.bytes += byteLength(line);
     let dropped = 0;
-    while (this.entries.length > 1 && (this.entries.length > this.maxLines || this.bytes > this.maxBytes)) {
+    while (this.entries.length > 1 && this.bytes > this.maxBytes) {
       const evicted = this.entries.shift();
       if (evicted === undefined) {
         break;

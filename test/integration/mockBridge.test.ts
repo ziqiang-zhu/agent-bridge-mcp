@@ -81,10 +81,10 @@ interface Wiring {
 const liveBridges: MockBridge[] = [];
 const liveClients: BridgeClient[] = [];
 
-async function wireUp(options: { maxLines?: number; maxBytes?: number } = {}): Promise<Wiring> {
+async function wireUp(options: { maxBytes?: number } = {}): Promise<Wiring> {
   const mock = new MockBridge();
   const port = await mock.listen();
-  const ring = new RingBuffer({ maxLines: options.maxLines ?? 5000, maxBytes: options.maxBytes ?? 1_000_000 });
+  const ring = new RingBuffer({ maxBytes: options.maxBytes ?? 1_000_000 });
   const bridge = new BridgeClient('127.0.0.1', port, { reconnectBaseMs: 50 });
   bridge.on('line', line => ring.push(line));
   bridge.start();
@@ -236,10 +236,11 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
   });
 
   it('#17 reports the gap honestly after buffer overflow', async () => {
-    const wiring = await wireUp({ maxLines: 50 });
+    // 定宽行（6B/行）保证字节上限 → 保留行数确定：1200B 总量、300B 上限 → 保留末 50 行
+    const wiring = await wireUp({ maxBytes: 300 });
     await waitFor(async () => (await status(wiring.client)).connected === true);
     for (let i = 1; i <= 200; i += 1) {
-      wiring.mock.write(`line-${i}\r\n`);
+      wiring.mock.write(`l-${String(i).padStart(4, '0')}\r\n`);
     }
     await waitFor(async () => (await status(wiring.client)).buffer?.newest === 200);
     const state = await status(wiring.client);
@@ -249,7 +250,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
     const result = payload(await callTool(wiring.client, 'read_output', {}));
     const lines = result.lines ?? [];
     assert.equal(lines.length, 50);
-    assert.equal(lines[0]?.text, 'line-151');
+    assert.equal(lines[0]?.text, 'l-0151');
     assert.equal(result.dropped, 0);
     wiring.bridge.stop();
     await wiring.mock.stop();

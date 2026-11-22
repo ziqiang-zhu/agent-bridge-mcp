@@ -8,7 +8,6 @@ export interface Config {
   host: string;
   port: number;
   readonly: boolean;
-  maxLines: number;
   maxBytes: number;
 }
 
@@ -16,7 +15,6 @@ export const CONFIG_DEFAULTS: Omit<Config, 'name'> = {
   host: '127.0.0.1',
   port: 2000,
   readonly: false,
-  maxLines: 5000,
   maxBytes: 1_048_576,
 };
 
@@ -24,7 +22,7 @@ export const CONFIG_DEFAULTS: Omit<Config, 'name'> = {
 export class UsageError extends Error {}
 
 const USAGE = `usage: agent-bridge-mcp --name <device label> [--host <host>] [--port <port>]
-                        [--readonly] [--max-lines <n>] [--max-bytes <bytes>]
+                        [--readonly] [--max-bytes <bytes>]
 
 --name is required: it identifies which device this instance controls.
 
@@ -74,7 +72,7 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.e
     }
     if (
       arg === '--name' || arg === '--host' || arg === '--port' ||
-      arg === '--max-lines' || arg === '--max-bytes'
+      arg === '--max-bytes'
     ) {
       const value = argv[index + 1];
       if (value === undefined) {
@@ -91,7 +89,6 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.e
   const hostRaw = args.get('--host') ?? env.AGENT_BRIDGE_HOST;
   const host = hostRaw !== undefined && hostRaw.trim() !== '' ? hostRaw.trim() : CONFIG_DEFAULTS.host;
   const port = parseIntValue('--port', args.get('--port') ?? env.AGENT_BRIDGE_PORT ?? String(CONFIG_DEFAULTS.port), 1, 65535);
-  const maxLines = parseIntValue('--max-lines', args.get('--max-lines') ?? String(CONFIG_DEFAULTS.maxLines), 1, 10_000_000);
   const maxBytes = parseIntValue('--max-bytes', args.get('--max-bytes') ?? String(CONFIG_DEFAULTS.maxBytes), 1024, 1_073_741_824);
 
   return {
@@ -99,7 +96,6 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.e
     host,
     port,
     readonly: readonlyFlag || parseReadonlyEnv(env.AGENT_BRIDGE_READONLY),
-    maxLines,
     maxBytes,
   };
 }
