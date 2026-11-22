@@ -55,14 +55,17 @@ npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes
 
 **Cursor**：MCP 设置 → Add server，表单等价于上。
 
-> **Windows 附加说明**：部分宿主直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["cmd", "/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]`。
+> **Windows 附加说明**：部分宿主直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]`。
+
+> **网络受限附加说明**：`#v0.1.0` 是 git 标签（可变引用），npx **每次启动都要联网**将 tag 解析为 commit——包体已在本地缓存也绕不开这一步。宿主机无法访问 GitHub 或延迟高时，宿主会报连接超时并反复重试。此时改用本地直跑：`git clone` 本仓库 → `npm install`（prepare 钩子自动构建 dist）→ 宿主配置 `command` 为 node 绝对路径、`args` 首位为 `dist/server.js` 绝对路径；Windows 下项目路径含空格时宿主会按空格截断，改为从无空格路径的启动器 js（内容一行 `require('<仓库>\dist\server.js')`）中转，参数原样透传；仓库更新后重跑 `npm run build` 刷新 dist。
 
 ### 第 3 步：验证
 
 宿主重载后调用 `status`：
 
 - `connected: true` → 安装完成，进入下方使用规约；
-- `connected: false` → 告知用户：先在扩展中连接设备，并点击终端标题栏的 AgentBridge 按钮（监听地址见状态栏）；端口不一致时修正 `--port` 后重载宿主再验。
+- `connected: false` → 告知用户：先在扩展中连接设备，并点击终端标题栏的 AgentBridge 按钮（监听地址见状态栏）；端口不一致时修正 `--port` 后重载宿主再验；
+- 宿主报**连接超时**并反复重试 → 第 2 步的 GitHub 前提不满足，按其网络受限附加说明改本地直跑。
 
 ## 工具使用规约（严格遵循）
 
