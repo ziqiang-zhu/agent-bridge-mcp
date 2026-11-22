@@ -16,12 +16,12 @@
 
 ```text
 1. 把 MCP 服务器 agent-bridge-mcp 添加到你的 MCP 客户端配置并启动：
-   传输方式 stdio，命令 npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --port 2000；
+   传输方式 stdio，命令 npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --port 2000；
 2. 调用 status 工具确认已连接 127.0.0.1:2000；
 3. 之后用 read_output 查看设备输出、send_line 发送命令，等待我的进一步指令。
 ```
 
-端口按 AgentBridge 实际监听地址调整（状态栏可见）。`#v0.1.0` 为版本 tag——钉住可复现，改为 `#main` 则跟随主干（不推荐用于稳定使用）。
+`--name` **必填**：设备标识（如 `imx6ull`、`继电器板`），多设备/多实例并存时它是 Agent 选择工具的依据，缺失则启动失败。端口按 AgentBridge 实际监听地址调整（状态栏可见）。`#v0.1.0` 为版本 tag——钉住可复现，改为 `#main` 则跟随主干（不推荐用于稳定使用）。
 
 ## ⚙️ 逐宿主配置片段
 
@@ -35,7 +35,7 @@
     "agent-bridge-mcp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--port", "2000"]
     }
   }
 }
@@ -50,7 +50,7 @@
   "mcpServers": {
     "agent-bridge-mcp": {
       "command": "npx",
-      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--port", "2000"]
     }
   }
 }
@@ -58,9 +58,9 @@
 
 ### Cursor
 
-MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --port 2000`。
+MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --port 2000`。
 
-> **Windows 附加说明**：部分宿主在 Windows 上直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["cmd", "/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]`。
+> **Windows 附加说明**：部分宿主在 Windows 上直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["cmd", "/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--port", "2000"]`。
 
 ## 🛠️ 工具
 
@@ -76,6 +76,7 @@ MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `np
 
 | 参数 | 环境变量 | 默认 | 说明 |
 |---|---|---|---|
+| `--name` | `AGENT_BRIDGE_NAME` | **必填** | 设备标识（多设备/多实例时 Agent 选择工具的依据；缺失启动失败） |
 | `--host` | `AGENT_BRIDGE_HOST` | `127.0.0.1` | AgentBridge 监听地址 |
 | `--port` | `AGENT_BRIDGE_PORT` | `2000` | AgentBridge 端口 |
 | `--readonly` | `AGENT_BRIDGE_READONLY` | 关 | 声明只读：不注册 `send_line`（见下安全说明） |

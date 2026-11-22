@@ -25,8 +25,8 @@ const makePair = async (options: { readonly?: boolean; maxLines?: number; lines?
     ring.push(line);
   }
   const bridge = new BridgeClient('127.0.0.1', 1); // 不 start：未连接态
-  const server = new McpServer({ name: 'agent-bridge-mcp', version: '0.1.0-test' });
-  registerTools(server, { bridge, ring, readonly: options.readonly ?? false, host: '127.0.0.1', port: 1 });
+  const server = new McpServer({ name: 'agent-bridge-mcp (test-device)', version: '0.1.0-test' });
+  registerTools(server, { bridge, ring, readonly: options.readonly ?? false, name: 'test-device', host: '127.0.0.1', port: 1 });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(clientTransport), client.connect(serverTransport)]);
@@ -79,10 +79,14 @@ describe('MCP 工具（read_output / send_line / status）', () => {
 
   it('#10 omits send tools when readonly is declared', async () => {
     const readonlyPair = await makePair({ readonly: true });
-    const tools = (await readonlyPair.client.listTools()).tools.map(tool => tool.name);
+    const listed = (await readonlyPair.client.listTools()).tools;
+    const tools = listed.map(tool => tool.name);
     assert.ok(tools.includes('read_output'));
     assert.ok(tools.includes('status'));
     assert.ok(!tools.includes('send_line'), 'readonly must not register send_line');
+    // 设备标识注入工具描述（§4 用户定夺 2026-11-22）：Agent 选择工具前即知操作对象
+    const readOutput = listed.find(tool => tool.name === 'read_output');
+    assert.match(readOutput?.description ?? '', /test-device/);
 
     const writablePair = await makePair({});
     const writableTools = (await writablePair.client.listTools()).tools.map(tool => tool.name);
@@ -96,9 +100,10 @@ describe('MCP 工具（read_output / send_line / status）', () => {
     assert.match(result.content[0]?.text ?? '', /bridge not connected/);
   });
 
-  it('#10c reports buffer state on status', async () => {
+  it('#10c reports device identity and buffer state on status', async () => {
     const { client } = await makePair({ lines: ['a', 'b'] });
     const state = payload(await callTool(client, 'status'));
+    assert.equal(state.name, 'test-device');
     assert.equal(state.connected, false);
     assert.equal(state.host, '127.0.0.1');
     assert.deepEqual(state.buffer, { oldest: 1, newest: 2, dropped_total: 0 });

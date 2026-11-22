@@ -5,7 +5,10 @@
 // - readonly 声明后 send 类工具不注册（§4——桥 readonly 客户端不可探测，依赖用户
 //   声明；send_raw 归 P1）；
 // - read_output 长轮询：即时读空且 wait_ms>0 且桥在线时挂 waiter 等新行（§3.5）；
-//   桥离线时数据不可能到达，直接返回不空等。
+//   桥离线时数据不可能到达，直接返回不空等；
+// - 设备标识（--name 必填，用户定夺 2026-11-22）：name 注入全部工具 description 与
+//   status 返回——多桥多实例并存时 Agent 在「选择工具之前」就知道每个工具操作的是
+//   哪台设备（选择阶段消除歧义，防误发）。
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { BridgeClient } from './bridgeClient';
@@ -40,22 +43,24 @@ export interface ToolDeps {
   bridge: BridgeClient;
   ring: RingBuffer;
   readonly: boolean;
+  name: string;
   host: string;
   port: number;
 }
 
 export function registerTools(server: McpServer, deps: ToolDeps): void {
-  const { bridge, ring } = deps;
+  const { bridge, ring, name } = deps;
 
   server.registerTool(
     'read_output',
     {
       description:
-        'Read device output lines collected from the serial terminal (ANSI already stripped by the ' +
-        'bridge). Pass `since` (a cursor from a previous call) to get only newer lines; omit it to ' +
-        'read from the oldest buffered line. Set `wait_ms` to long-poll for new data instead of ' +
-        'returning immediately. Each line carries a monotonically increasing `seq` - store the ' +
-        'returned `next_cursor` and pass it back as `since` next time to never miss or duplicate output.',
+        `Read device output lines collected from the serial terminal of device '${name}' (ANSI ` +
+        'already stripped by the bridge). Pass `since` (a cursor from a previous call) to get only ' +
+        'newer lines; omit it to read from the oldest buffered line. Set `wait_ms` to long-poll for ' +
+        'new data instead of returning immediately. Each line carries a monotonically increasing ' +
+        '`seq` - store the returned `next_cursor` and pass it back as `since` next time to never ' +
+        'miss or duplicate output.',
       inputSchema: {
         since: z.number().int().optional(),
         wait_ms: z.number().int().optional(),
@@ -91,9 +96,9 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       'send_line',
       {
         description:
-          'Send one line of text to the device over the serial terminal. A line ending (CR by ' +
-          'default, configurable at server start) is appended automatically. Collect the response ' +
-          'with `read_output`.',
+          `Send one line of text to the device '${name}' over its serial terminal. A line ending ` +
+          '(CR by default, configurable at server start) is appended automatically. Collect the ' +
+          'response with `read_output`.',
         inputSchema: {
           text: z.string().min(1).max(4000),
         },
@@ -112,12 +117,13 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     'status',
     {
       description:
-        'Report the connection state to the AgentBridge (host, port, connected) and the line ' +
-        'buffer state (oldest/newest seq, total dropped lines).',
+        `Report the state of device '${name}': the connection to its AgentBridge (host, port, ` +
+        'connected) and the line buffer state (oldest/newest seq, total dropped lines).',
       inputSchema: {},
     },
     async () => ({
       content: text({
+        name,
         connected: bridge.connected,
         host: deps.host,
         port: deps.port,

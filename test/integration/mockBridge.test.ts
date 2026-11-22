@@ -91,7 +91,7 @@ async function wireUp(options: { maxLines?: number; maxBytes?: number } = {}): P
   liveBridges.push(mock);
   liveClients.push(bridge);
 
-  const deps = { bridge, ring, readonly: false, host: '127.0.0.1', port };
+  const deps = { bridge, ring, readonly: false, name: 'mock-device', host: '127.0.0.1', port };
   const addClient = async (): Promise<Client> => {
     const server = new McpServer({ name: 'agent-bridge-mcp', version: '0.1.0-test' });
     registerTools(server, deps);

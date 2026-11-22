@@ -30,7 +30,7 @@ async function main(): Promise<void> {
     return;
   }
   log(
-    `v${VERSION} starting (host=${config.host} port=${config.port} readonly=${config.readonly} ` +
+    `v${VERSION} starting (name=${config.name} host=${config.host} port=${config.port} readonly=${config.readonly} ` +
     `maxLines=${config.maxLines} maxBytes=${config.maxBytes})`
   );
 
@@ -47,10 +47,21 @@ async function main(): Promise<void> {
   });
   bridge.start();
 
-  const server = new McpServer({ name: 'agent-bridge-mcp', version: VERSION });
-  registerTools(server, { bridge, ring, readonly: config.readonly, host: config.host, port: config.port });
+  // MCP 服务器名携带设备标识（initialize 报告 + 宿主 UI 显示实例自描述）。
+  const server = new McpServer({ name: `agent-bridge-mcp (${config.name})`, version: VERSION });
+  registerTools(server, { bridge, ring, readonly: config.readonly, name: config.name, host: config.host, port: config.port });
   await server.connect(new StdioServerTransport());
   log('stdio transport connected');
+
+  // 生命周期（真机缺陷修复：桥在线时活跃 socket 会挂住事件循环，宿主关停 stdio 后
+  // 进程滞留为孤儿、占着桥客户端位不释放）：stdin 结束 = 宿主关停 → 停桥 → 退出。
+  const shutdown = (): void => {
+    log('shutting down (stdio closed)');
+    bridge.stop();
+    process.exit(0);
+  };
+  process.stdin.on('end', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 void main();
