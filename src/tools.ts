@@ -6,6 +6,9 @@
 //   声明；send_raw 归 P1）；
 // - read_output 长轮询：即时读空且 wait_ms>0 且桥在线时挂 waiter 等新行（§3.5）；
 //   桥离线时数据不可能到达，直接返回不空等；
+// - 查询即挂接（§3.3，2026-11-23 用户定夺「方案 B 含 read_output」）：status /
+//   read_output 断开态调用先 connectNow（立即尝试 + ≤300ms 定格）再应答——报回/
+//   读取的是尝试后的真实状态，桥刚上线时首次调用即刻可用；
 // - 设备标识（--name 必填，用户定夺 2026-11-22）：name 注入全部工具 description 与
 //   status 返回——多桥多实例并存时 Agent 在「选择工具之前」就知道每个工具操作的是
 //   哪台设备（选择阶段消除歧义，防误发）。
@@ -56,7 +59,8 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       description:
         `Read device output lines collected from the serial terminal of device '${name}' (ANSI ` +
-        'already stripped by the bridge). Pass `since` (a cursor from a previous call) to get only ' +
+        'already stripped by the bridge). When disconnected, the call first attempts to connect ' +
+        'to the bridge immediately (bypassing the reconnect backoff). Pass `since` (a cursor from a previous call) to get only ' +
         'newer lines; omit it to read from the oldest buffered line. Set `wait_ms` to long-poll for ' +
         'new data instead of returning immediately. Each line carries a monotonically increasing ' +
         '`seq` - store the returned `next_cursor` and pass it back as `since` next time to never ' +
@@ -68,6 +72,10 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       },
     },
     async args => {
+      // 查询即挂接（§3.3）：断开态先即时挂接再读——挂接成功后长轮询才有新行可等。
+      if (!bridge.connected) {
+        await bridge.connectNow();
+      }
       // 缺省从缓冲最旧开始：读取语义是 seq > since，故缺省种子取 oldest - 1（含最旧行）。
       // 范围越界不进 schema（宽容输入 §4.2）——全部由 clamp 收敛。
       const since = Math.max(0, args.since ?? Math.max(0, ring.oldest() - 1));
@@ -118,22 +126,30 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       description:
         `Report the state of device '${name}': the connection to its AgentBridge (host, port, ` +
-        'connected) and the line buffer state (oldest/newest seq, total dropped lines).',
+        'connected) and the line buffer state (oldest/newest seq, total dropped lines). When ' +
+        'disconnected, the call first attempts to connect immediately (bypassing the reconnect ' +
+        'backoff) and reports the resulting state.',
       inputSchema: {},
     },
-    async () => ({
-      content: text({
-        name,
-        connected: bridge.connected,
-        host: deps.host,
-        port: deps.port,
-        readonly: deps.readonly,
-        buffer: {
-          oldest: ring.oldest(),
-          newest: ring.newest(),
-          dropped_total: ring.droppedTotal(),
-        },
-      }),
-    })
+    async () => {
+      // 查询即挂接（§3.3）：断开态先尝试立即连接，报回的是尝试后的真实状态。
+      if (!bridge.connected) {
+        await bridge.connectNow();
+      }
+      return {
+        content: text({
+          name,
+          connected: bridge.connected,
+          host: deps.host,
+          port: deps.port,
+          readonly: deps.readonly,
+          buffer: {
+            oldest: ring.oldest(),
+            newest: ring.newest(),
+            dropped_total: ring.droppedTotal(),
+          },
+        }),
+      };
+    }
   );
 }

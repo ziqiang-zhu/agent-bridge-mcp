@@ -36,6 +36,11 @@ class MockBridge {
   readonly received: string[] = [];
   private listenPort = 0;
 
+  // 已建立过的连接总数（socket 只增不移除）：#20 用它断言「连接态查询不重复拨号」。
+  get connectionCount(): number {
+    return this.sockets.length;
+  }
+
   async listen(port = 0): Promise<number> {
     this.server = net.createServer(socket => {
       this.sockets.push(socket);
@@ -81,11 +86,15 @@ interface Wiring {
 const liveBridges: MockBridge[] = [];
 const liveClients: BridgeClient[] = [];
 
-async function wireUp(options: { maxBytes?: number } = {}): Promise<Wiring> {
+async function wireUp(options: { maxBytes?: number; reconnectBaseMs?: number; bridgeDown?: boolean } = {}): Promise<Wiring> {
   const mock = new MockBridge();
   const port = await mock.listen();
+  if (options.bridgeDown) {
+    // 先拿端口再下线：客户端将在「桥未监听」状态下启动（首次尝试失败 → 退避挂起）
+    await mock.stop();
+  }
   const ring = new RingBuffer({ maxBytes: options.maxBytes ?? 1_000_000 });
-  const bridge = new BridgeClient('127.0.0.1', port, { reconnectBaseMs: 50 });
+  const bridge = new BridgeClient('127.0.0.1', port, { reconnectBaseMs: options.reconnectBaseMs ?? 50 });
   bridge.on('line', line => ring.push(line));
   bridge.start();
   liveBridges.push(mock);
@@ -264,6 +273,57 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
     wiring.mock.write('root@localhost:~# ');
     const result = payload(await callTool(wiring.client, 'read_output', { wait_ms: 1500 }));
     assert.deepEqual((result.lines ?? []).map(line => line.text), ['root@localhost:~# ']);
+    wiring.bridge.stop();
+    await wiring.mock.stop();
+  });
+
+  it('#19 attaches immediately via query tools while reconnect backoff is pending', async () => {
+    // 大退避基数（10s）：自主循环在首次失败后要等 10s 才会再试——若靠退避，本次
+    // 断言必然失败；桥恢复监听后的单次查询应即时挂接（§3.3 查询即挂接）
+    const wiring = await wireUp({ reconnectBaseMs: 10_000, bridgeDown: true });
+    const refused = await status(wiring.client);
+    assert.equal(refused.connected, false); // 首次尝试失败（桥未监听），退避 10s 挂起
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await wiring.mock.restart();
+    const started = Date.now();
+    // read_output 与 status 共用 connectNow：两次独立调用各自验证
+    const read = payload(await callTool(wiring.client, 'read_output', {}));
+    assert.equal(read.connected, true);
+    const state = await status(wiring.client);
+    assert.equal(state.connected, true);
+    assert.ok(Date.now() - started < 5000, `should attach immediately, took ${Date.now() - started}ms`);
+    wiring.bridge.stop();
+    await wiring.mock.stop();
+  });
+
+  it('#20 does not dial a second socket when status runs while connected', async () => {
+    const wiring = await wireUp();
+    await waitFor(async () => (await status(wiring.client)).connected === true);
+    const first = await status(wiring.client);
+    const second = await status(wiring.client);
+    assert.equal(first.connected, true);
+    assert.equal(second.connected, true);
+    assert.equal(wiring.mock.connectionCount, 1, 'connected-state query must not dial again');
+    wiring.bridge.stop();
+    await wiring.mock.stop();
+  });
+
+  it('#21 keeps the autonomous reconnect loop alive after a failed attach attempt', async () => {
+    // 断开态单次 status 的挂接尝试失败后不再调用任何工具：退避循环须自行在桥恢复
+    // 后完成重连（证明挂接失败未污染自主循环，§3.3 反抖动语义保留）
+    const wiring = await wireUp({ reconnectBaseMs: 60, bridgeDown: true });
+    const refused = await status(wiring.client);
+    assert.equal(refused.connected, false);
+    await wiring.mock.restart();
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('autonomous reconnect did not happen')), 8000);
+      wiring.bridge.once('status', connected => {
+        if (connected) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
     wiring.bridge.stop();
     await wiring.mock.stop();
   });

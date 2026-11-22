@@ -9,7 +9,7 @@ import { resolveConfig, UsageError } from './config';
 import { RingBuffer } from './lineBuffer';
 import { registerTools } from './tools';
 
-const VERSION = '0.1.0'; // 与 package.json 同步维护（npm 发版前核对）
+const VERSION = '0.1.1'; // 与 package.json 同步维护（npm 发版前核对）
 
 const PREFIX = '[agent-bridge-mcp]';
 const log = (message: string): void => {

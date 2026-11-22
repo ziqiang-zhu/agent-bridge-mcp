@@ -3,6 +3,7 @@
 // 行组装交 LineAssembler（半行保留）；断线收尾：decoder 冲尾 + 半行刷出为独立行
 // （先于 status 下行，保证缓冲先收完再翻状态，§3.4）。桥不可达时进程保持存活，
 // 重连循环持续；stop() 为收尾语义（停止重连并断开，MCP 服务器关闭时调用）。
+// connectNow() 查询即挂接（§3.3）：断开态立即尝试一次连接并等待定格（≤300ms）。
 import { EventEmitter } from 'node:events';
 import { Socket } from 'node:net';
 import { LineAssembler } from './lineBuffer';
@@ -13,6 +14,9 @@ const RECONNECT_MAX_MS = 30000;
 // 行组装会再次缓冲等 \n——若无空闲刷出，提示符要到下一波输出才可见，桥侧「消除
 // 提示符延迟」的设计意图在 MCP 层被二次延迟。200ms 静默即把残留半行刷出为独立行。
 const IDLE_FLUSH_MS = 200;
+// 查询即挂接的定格等待上限（§3.3）：本机拒绝/接受均为瞬时，上限只对「不可达远端的
+// SYN 悬挂」生效——超时如实返回当前状态，自主重连循环不受影响。
+const CONNECT_NOW_SETTLE_MS = 300;
 
 export interface BridgeClientOptions {
   // 重连退避基数（毫秒，默认 1000、逐次翻倍、30s 封顶）；测试注入小值加速重连。
@@ -58,12 +62,50 @@ export class BridgeClient extends EventEmitter {
   stop(): void {
     this.stopped = true;
     this.clearIdleFlush();
-    if (this.retryTimer !== undefined) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = undefined;
-    }
+    this.cancelRetryTimer();
     this.connectedState = false;
     this.socket?.destroy();
+  }
+
+  // 查询即挂接（§3.3）：工具层（status/read_output）在断开态调用——取消挂起的退避
+  // timer 并立即发起一次真实连接尝试，等待其定格（≤CONNECT_NOW_SETTLE_MS）。幂等：
+  // 已连接立即返回 true；在途尝试不重复拨号、只等其定格。失败不重置退避序列（反抖
+  // 动语义保留，自主循环不受影响）；stopped 为收尾语义，不再发起。
+  async connectNow(): Promise<boolean> {
+    if (this.stopped) {
+      return this.connectedState;
+    }
+    this.cancelRetryTimer();
+    if (this.socket === undefined) {
+      this.connect();
+    }
+    return new Promise<boolean>(resolve => {
+      let settled = false;
+      const finish = (value: boolean): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timer);
+        this.off('status', onStatus);
+        this.off('close', onClose);
+        resolve(value);
+      };
+      const onStatus = (connected: boolean): void => {
+        if (connected) {
+          finish(true);
+        }
+      };
+      const onClose = (): void => {
+        finish(this.connectedState);
+      };
+      const timer = setTimeout(() => finish(this.connectedState), CONNECT_NOW_SETTLE_MS);
+      this.on('status', onStatus);
+      this.on('close', onClose);
+      if (this.connectedState) {
+        finish(true);
+      }
+    });
   }
 
   // 上行；未连接返回 false（工具层据此报「bridge not connected」，不假成功）。
@@ -160,6 +202,13 @@ export class BridgeClient extends EventEmitter {
     if (this.idleTimer !== undefined) {
       clearTimeout(this.idleTimer);
       this.idleTimer = undefined;
+    }
+  }
+
+  private cancelRetryTimer(): void {
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
     }
   }
 }

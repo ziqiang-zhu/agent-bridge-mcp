@@ -21,7 +21,7 @@
 传输方式 stdio，参数模板：
 
 ```text
-npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes <字节> --port 2000
+npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.1 --name <设备名> --max-bytes <字节> --port 2000
 ```
 
 逐宿主片段：
@@ -34,7 +34,7 @@ npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes
     "agent-bridge-mcp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.1", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]
     }
   }
 }
@@ -47,7 +47,7 @@ npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes
   "mcpServers": {
     "agent-bridge-mcp": {
       "command": "npx",
-      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.1", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]
     }
   }
 }
@@ -55,13 +55,13 @@ npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes
 
 **Cursor**：MCP 设置 → Add server，表单等价于上。
 
-> **Windows 附加说明**：部分宿主直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]`。
+> **Windows 附加说明**：部分宿主直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.1", "--name", "<设备名>", "--max-bytes", "<字节>", "--port", "2000"]`。
 
-> **网络受限附加说明**：`#v0.1.0` 是 git 标签（可变引用），npx **每次启动都要联网**将 tag 解析为 commit——包体已在本地缓存也绕不开这一步。宿主机无法访问 GitHub 或延迟高时，宿主会报连接超时并反复重试。此时改用本地直跑：`git clone` 本仓库 → `npm install`（prepare 钩子自动构建 dist）→ 宿主配置 `command` 为 node 绝对路径、`args` 首位为 `dist/server.js` 绝对路径；Windows 下项目路径含空格时宿主会按空格截断，改为从无空格路径的启动器 js（内容一行 `require('<仓库>\dist\server.js')`）中转，参数原样透传；仓库更新后重跑 `npm run build` 刷新 dist。
+> **网络受限附加说明**：`#v0.1.1` 是 git 标签（可变引用），npx **每次启动都要联网**将 tag 解析为 commit——包体已在本地缓存也绕不开这一步。宿主机无法访问 GitHub 或延迟高时，宿主会报连接超时并反复重试。此时改用本地直跑：`git clone` 本仓库 → `npm install`（prepare 钩子自动构建 dist）→ 宿主配置 `command` 为 node 绝对路径、`args` 首位为 `dist/server.js` 绝对路径；Windows 下项目路径含空格时宿主会按空格截断，改为从无空格路径的启动器 js（内容一行 `require('<仓库>\dist\server.js')`）中转，参数原样透传；仓库更新后重跑 `npm run build` 刷新 dist。
 
 ### 第 3 步：验证
 
-宿主重载后调用 `status`：
+宿主重载后调用 `status`（断开态调用会先尝试立即连接，报回的是尝试后的真实状态——桥已开启但实例还在退避等待时也能即刻确认）：
 
 - `connected: true` → 安装完成，进入下方使用规约；
 - `connected: false` → 告知用户：先在扩展中连接设备，并点击终端标题栏的 AgentBridge 按钮（监听地址见状态栏）；端口不一致时修正 `--port` 后重载宿主再验；
@@ -77,6 +77,7 @@ npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --name <设备名> --max-bytes
 ### 等待语义
 
 - 发送命令后用 `read_output(wait_ms=3000~5000)` 收集应答——新数据到达会立即返回，无需轮询；
+- `status` / `read_output` 在断开态会先尝试即时挂接（绕过重连退避）：桥刚开启时直接调用即可，无需等退避周期走完；
 - 异步日志（内核打印、应用输出）持续进缓冲：事后用保存的游标补收即可；
 - 末行形如提示符（如 `=> `、`root@localhost:~# `）通常意味着上一条命令已执行完毕。
 

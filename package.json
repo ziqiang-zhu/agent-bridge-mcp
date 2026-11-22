@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for the Serial Port Terminal AgentBridge: persistent subscription with a cursor-based line buffer, so agent command cycles never lose device logs",
   "license": "MIT",
   "type": "commonjs",
