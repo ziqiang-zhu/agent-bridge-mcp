@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "compile:test": "tsc -p tsconfig.test.json",
-    "test": "npm run compile:test && node --test \"out-test/test/**/*.test.js\""
+    "test": "npm run compile:test && node --test \"out-test/test/**/*.test.js\"",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

@@ -7,7 +7,8 @@
 ## 前置条件
 
 - VS Code 扩展 Serial Port Terminal 已连接串口设备，并**开启 AgentBridge**（终端标题栏 📢 按钮；默认监听 `127.0.0.1:2000`，地址见状态栏，客户端数以 `· N` 常驻显示）；
-- Node.js ≥ 18（`npx` 随 npm 附带）。
+- Node.js ≥ 18（`npx` 随 npm 附带）；
+- **git**（分发为 git 直连：`npx github:` 安装时 npm 自动 clone 仓库、执行 prepare 编译、装依赖并启动——首次拉取稍慢，之后走 npm 缓存）。
 
 ## 🚀 一条提示词接入
 
@@ -15,12 +16,12 @@
 
 ```text
 1. 把 MCP 服务器 agent-bridge-mcp 添加到你的 MCP 客户端配置并启动：
-   传输方式 stdio，命令 npx -y agent-bridge-mcp --port 2000；
+   传输方式 stdio，命令 npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --port 2000；
 2. 调用 status 工具确认已连接 127.0.0.1:2000；
 3. 之后用 read_output 查看设备输出、send_line 发送命令，等待我的进一步指令。
 ```
 
-端口按 AgentBridge 实际监听地址调整（状态栏可见）。
+端口按 AgentBridge 实际监听地址调整（状态栏可见）。`#v0.1.0` 为版本 tag——钉住可复现，改为 `#main` 则跟随主干（不推荐用于稳定使用）。
 
 ## ⚙️ 逐宿主配置片段
 
@@ -34,7 +35,7 @@
     "agent-bridge-mcp": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "agent-bridge-mcp", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]
     }
   }
 }
@@ -49,7 +50,7 @@
   "mcpServers": {
     "agent-bridge-mcp": {
       "command": "npx",
-      "args": ["-y", "agent-bridge-mcp", "--port", "2000"]
+      "args": ["-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]
     }
   }
 }
@@ -57,9 +58,9 @@
 
 ### Cursor
 
-MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `npx -y agent-bridge-mcp --port 2000`。
+MCP 设置 → Add server：name `agent-bridge-mcp`、type `stdio`、command `npx -y github:ziqiang-zhu/agent-bridge-mcp#v0.1.0 --port 2000`。
 
-> **Windows 附加说明**：部分宿主在 Windows 上直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["cmd", "/c", "npx", "-y", "agent-bridge-mcp", "--port", "2000"]`。
+> **Windows 附加说明**：部分宿主在 Windows 上直接拉起 `npx` 会失败，改用 `cmd /c` 包装——`command: "cmd"`、`args: ["cmd", "/c", "npx", "-y", "github:ziqiang-zhu/agent-bridge-mcp#v0.1.0", "--port", "2000"]`。
 
 ## 🛠️ 工具
 
