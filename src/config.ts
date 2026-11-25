@@ -9,24 +9,32 @@ export interface Config {
   port: number;
   readonly: boolean;
   maxBytes: number;
+  mode: BridgeMode;
 }
+
+// 桥托管方（设计 §2/§4）：terminal = 终端开桥（剥 ANSI + 行转发，行工具）；
+// stream = 串口助手开桥（透传原样字节，字节工具）。桥无握手、无法探测，只能由用户声明。
+export type BridgeMode = 'terminal' | 'stream';
 
 export const CONFIG_DEFAULTS: Omit<Config, 'name'> = {
   host: '127.0.0.1',
   port: 2000,
   readonly: false,
   maxBytes: 1_048_576,
+  mode: 'terminal',
 };
 
 // --help：main 捕获后输出 usage 并以 0 退出（与参数错误 exit 1 区分）。
 export class UsageError extends Error {}
 
 const USAGE = `usage: agent-bridge-mcp --name <device label> [--host <host>] [--port <port>]
-                        [--readonly] [--max-bytes <bytes>]
+                        [--readonly] [--max-bytes <bytes>] [--mode <terminal|stream>]
 
 --name is required: it identifies which device this instance controls.
+--mode selects the bridge hosting side: terminal (default, line tools) or
+stream (raw byte tools for an assist-hosted bridge).
 
-env: AGENT_BRIDGE_NAME / AGENT_BRIDGE_HOST / AGENT_BRIDGE_PORT / AGENT_BRIDGE_READONLY`;
+env: AGENT_BRIDGE_NAME / AGENT_BRIDGE_HOST / AGENT_BRIDGE_PORT / AGENT_BRIDGE_READONLY / AGENT_BRIDGE_MODE`;
 
 function parseIntValue(name: string, raw: string, min: number, max: number): number {
   const value = Number(raw);
@@ -55,6 +63,17 @@ function parseName(raw: string | undefined): string {
   return name;
 }
 
+function parseMode(raw: string | undefined): BridgeMode {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === '' || value === 'terminal') {
+    return 'terminal';
+  }
+  if (value === 'stream') {
+    return 'stream';
+  }
+  throw new Error(`--mode must be 'terminal' or 'stream', got ${raw}`);
+}
+
 export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.env): Config {
   const args = new Map<string, string>();
   let readonlyFlag = false;
@@ -72,7 +91,7 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.e
     }
     if (
       arg === '--name' || arg === '--host' || arg === '--port' ||
-      arg === '--max-bytes'
+      arg === '--max-bytes' || arg === '--mode'
     ) {
       const value = argv[index + 1];
       if (value === undefined) {
@@ -97,5 +116,6 @@ export function resolveConfig(argv: string[], env: NodeJS.ProcessEnv = process.e
     port,
     readonly: readonlyFlag || parseReadonlyEnv(env.AGENT_BRIDGE_READONLY),
     maxBytes,
+    mode: parseMode(args.get('--mode') ?? env.AGENT_BRIDGE_MODE),
   };
 }

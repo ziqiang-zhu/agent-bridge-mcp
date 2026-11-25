@@ -7,12 +7,15 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { BridgeClient } from '../../src/bridgeClient';
+import { ByteRing } from '../../src/byteBuffer';
+import type { BridgeMode } from '../../src/config';
 import { RingBuffer } from '../../src/lineBuffer';
 import { registerTools } from '../../src/tools';
 
-// mock 桥集成契约（doc/设计.md §8.1 #11–#18）：真实 TCP（mock 桥 = 测试内 net.Server，
-// 按 LinuxShell 语义回发）+ 真实 BridgeClient / RingBuffer / MCP 工具层，经
-// InMemoryTransport 配对走真实协议层。确定性：无真实设备、无时间敏感断言。
+// mock 桥集成契约（doc/设计.md §8.1 #11–#21 / §8.2 #28–#29）：真实 TCP（mock 桥 =
+// 测试内 net.Server，按 LinuxShell 语义回发，或 stream 模式回发原始字节）+ 真实
+// BridgeClient / RingBuffer / ByteRing / MCP 工具层，经 InMemoryTransport 配对走真实
+// 协议层。确定性：无真实设备、无时间敏感断言。
 
 interface ToolResult {
   content: { type: string; text: string }[];
@@ -23,10 +26,15 @@ interface Payload extends Record<string, unknown> {
   lines?: { seq: number; text: string }[];
   next_cursor?: number;
   dropped?: number;
+  data?: string;
+  dropped_bytes?: number;
+  oldest_offset?: number;
+  newest_offset?: number;
   connected?: boolean;
   host?: string;
   port?: number;
-  buffer?: { oldest: number; newest: number; dropped_total: number };
+  mode?: string;
+  buffer?: Record<string, number>;
 }
 
 // mock 桥：测试内 net.Server，支持同端口 stop/restart（供重连用例）与向客户端写入。
@@ -34,6 +42,7 @@ class MockBridge {
   private server: net.Server | undefined;
   private sockets: net.Socket[] = [];
   readonly received: string[] = [];
+  readonly receivedBuffers: Buffer[] = [];
   private listenPort = 0;
 
   // 已建立过的连接总数（socket 只增不移除）：#20 用它断言「连接态查询不重复拨号」。
@@ -44,7 +53,10 @@ class MockBridge {
   async listen(port = 0): Promise<number> {
     this.server = net.createServer(socket => {
       this.sockets.push(socket);
-      socket.on('data', chunk => this.received.push(chunk.toString('utf8')));
+      socket.on('data', chunk => {
+        this.receivedBuffers.push(Buffer.from(chunk));
+        this.received.push(chunk.toString('utf8'));
+      });
       socket.on('error', () => {});
     });
     await new Promise<void>((resolve, reject) => {
@@ -72,11 +84,37 @@ class MockBridge {
       socket.write(text);
     }
   }
+
+  writeBytes(data: Buffer): void {
+    for (const socket of this.sockets) {
+      socket.write(data);
+    }
+  }
+
+  receivedBytes(): Buffer {
+    return Buffer.concat(this.receivedBuffers);
+  }
+
+  /**
+   * 服务端 accept 就绪信号：客户端 'connect' 可能先于服务端 'connection' 到达
+   *（Windows IOCP 时序，扩展仓集成同样记录过该竞态）——此刻向 sockets 写数据会
+   * 落空。所有「连接后立即下行写入」的用例在写入前先等此信号。
+   */
+  async waitForClient(timeoutMs = 5000): Promise<void> {
+    const start = Date.now();
+    while (this.sockets.length === 0) {
+      if (Date.now() - start > timeoutMs) {
+        throw new Error('mock bridge saw no client within timeout');
+      }
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
 }
 
 interface Wiring {
   client: Client;
   ring: RingBuffer;
+  byteRing: ByteRing;
   bridge: BridgeClient;
   mock: MockBridge;
   addClient: () => Promise<Client>;
@@ -86,7 +124,10 @@ interface Wiring {
 const liveBridges: MockBridge[] = [];
 const liveClients: BridgeClient[] = [];
 
-async function wireUp(options: { maxBytes?: number; reconnectBaseMs?: number; bridgeDown?: boolean } = {}): Promise<Wiring> {
+async function wireUp(
+  options: { maxBytes?: number; reconnectBaseMs?: number; bridgeDown?: boolean; mode?: BridgeMode } = {}
+): Promise<Wiring> {
+  const mode = options.mode ?? 'terminal';
   const mock = new MockBridge();
   const port = await mock.listen();
   if (options.bridgeDown) {
@@ -94,13 +135,18 @@ async function wireUp(options: { maxBytes?: number; reconnectBaseMs?: number; br
     await mock.stop();
   }
   const ring = new RingBuffer({ maxBytes: options.maxBytes ?? 1_000_000 });
+  const byteRing = new ByteRing({ maxBytes: options.maxBytes ?? 1_000_000 });
   const bridge = new BridgeClient('127.0.0.1', port, { reconnectBaseMs: options.reconnectBaseMs ?? 50 });
-  bridge.on('line', line => ring.push(line));
+  if (mode === 'stream') {
+    bridge.on('chunk', chunk => byteRing.push(chunk));
+  } else {
+    bridge.on('line', line => ring.push(line));
+  }
   bridge.start();
   liveBridges.push(mock);
   liveClients.push(bridge);
 
-  const deps = { bridge, ring, readonly: false, name: 'mock-device', host: '127.0.0.1', port };
+  const deps = { bridge, ring, byteRing, readonly: false, name: 'mock-device', host: '127.0.0.1', port, mode };
   const addClient = async (): Promise<Client> => {
     const server = new McpServer({ name: 'agent-bridge-mcp', version: '0.1.0-test' });
     registerTools(server, deps);
@@ -110,7 +156,7 @@ async function wireUp(options: { maxBytes?: number; reconnectBaseMs?: number; br
     return client;
   };
   const client = await addClient();
-  return { client, ring, bridge, mock, addClient };
+  return { client, ring, byteRing, bridge, mock, addClient };
 }
 
 async function callTool(client: Client, name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
@@ -187,6 +233,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
   it('#14 collects a full command round trip without loss or duplication', async () => {
     const wiring = await wireUp();
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
     await callTool(wiring.client, 'send_line', { text: 'help' });
     // LinuxShell 语义：回显 + 应答 + 提示符（\r\n 行尾）
     wiring.mock.write('help\r\nAvailable commands: help\r\nroot@localhost:~# ');
@@ -209,6 +256,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
   it('#15 wakes long-poll on new data and times out to empty', async () => {
     const wiring = await wireUp();
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
     // 长轮询中被新数据唤醒
     const polling = callTool(wiring.client, 'read_output', { wait_ms: 1000 });
     setTimeout(() => wiring.mock.write('later\r\n'), 100);
@@ -229,6 +277,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
     const wiring = await wireUp();
     const agent2 = await wiring.addClient();
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
     wiring.mock.write('a\r\nb\r\n');
     await waitFor(async () => ((await status(wiring.client)).buffer?.newest ?? 0) >= 2);
     const agent1View = payload(await callTool(wiring.client, 'read_output', {}));
@@ -248,6 +297,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
     // 定宽行（6B/行）保证字节上限 → 保留行数确定：1200B 总量、300B 上限 → 保留末 50 行
     const wiring = await wireUp({ maxBytes: 300 });
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
     for (let i = 1; i <= 200; i += 1) {
       wiring.mock.write(`l-${String(i).padStart(4, '0')}\r\n`);
     }
@@ -268,6 +318,7 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
   it('#18 delivers an idle-flushed half-line (prompt visibility)', async () => {
     const wiring = await wireUp();
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
     // 桥空闲刷出形态：无换行的半行（典型 = 提示符）→ MCP 侧 200ms 空闲刷出为独立行，
     // agent 经 read_output 及时看到「命令已执行完」的提示符信号（§3.1 空闲刷出语义）
     wiring.mock.write('root@localhost:~# ');
@@ -299,6 +350,9 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
   it('#20 does not dial a second socket when status runs while connected', async () => {
     const wiring = await wireUp();
     await waitFor(async () => (await status(wiring.client)).connected === true);
+    // connectionCount 是服务端视角：客户端 'connect' 先于服务端 accept 时计数仍为 0，
+    // 先等 accept 落地再断言「两次查询不额外拨号」。
+    await wiring.mock.waitForClient();
     const first = await status(wiring.client);
     const second = await status(wiring.client);
     assert.equal(first.connected, true);
@@ -324,6 +378,45 @@ describe('mock 桥集成（真实 TCP + 真实工具层）', () => {
         }
       });
     });
+    wiring.bridge.stop();
+    await wiring.mock.stop();
+  });
+
+  it('#28 keeps a binary round trip byte-exact in stream mode', async () => {
+    const wiring = await wireUp({ mode: 'stream' });
+    await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
+    const frame = Buffer.from([0x55, 0x85, 0x11, 0x94, 0x0a, 0x00, 0xff, 0x0d, 0x80, 0xaa]);
+    wiring.mock.writeBytes(frame);
+    await waitFor(async () => ((await status(wiring.client)).buffer?.newest_offset ?? 0) >= frame.length);
+    const read = payload(await callTool(wiring.client, 'read_bytes', {}));
+    const received = Buffer.from(String(read.data), 'base64');
+    assert.equal(received.length, frame.length);
+    assert.deepEqual([...received], [...frame]);
+    assert.equal(read.next_cursor, frame.length);
+    // send_bytes：hex 编码 → 桥收到精确字节、不追加行尾
+    const sent = await callTool(wiring.client, 'send_bytes', { data: '55 85 11 94 aa' });
+    assert.equal(sent.isError, undefined);
+    await waitFor(() => wiring.mock.receivedBytes().length >= 5);
+    assert.deepEqual([...wiring.mock.receivedBytes()], [0x55, 0x85, 0x11, 0x94, 0xaa]);
+    wiring.bridge.stop();
+    await wiring.mock.stop();
+  });
+
+  it('#29 wakes the byte long-poll on new bytes and times out to empty', async () => {
+    const wiring = await wireUp({ mode: 'stream' });
+    await waitFor(async () => (await status(wiring.client)).connected === true);
+    await wiring.mock.waitForClient();
+    const polling = callTool(wiring.client, 'read_bytes', { wait_ms: 1000 });
+    setTimeout(() => wiring.mock.writeBytes(Buffer.from([0x01, 0x02, 0x03])), 100);
+    const started = Date.now();
+    const woken = payload(await polling);
+    assert.deepEqual([...Buffer.from(String(woken.data), 'base64')], [0x01, 0x02, 0x03]);
+    assert.ok(Date.now() - started < 900, `should wake before wait_ms, took ${Date.now() - started}ms`);
+    const idleStart = Date.now();
+    const idle = payload(await callTool(wiring.client, 'read_bytes', { since: woken.next_cursor, wait_ms: 250 }));
+    assert.equal(Buffer.from(String(idle.data), 'base64').length, 0);
+    assert.ok(Date.now() - idleStart >= 200, `should wait at least ~wait_ms, took ${Date.now() - idleStart}ms`);
     wiring.bridge.stop();
     await wiring.mock.stop();
   });

@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 // agent-bridge-mcp 入口：stdio MCP 服务器（doc/设计.md §2/§9）。
-// 装配：配置解析 → RingBuffer + BridgeClient（持久订阅，断线重连）→ 工具注册 →
-// stdio 会话。stdout 被 MCP 协议独占，一切日志走 stderr（§7.1 红线）。
+// 装配：配置解析 → 缓冲（terminal 行环 / stream 字节环）+ BridgeClient（持久订阅，
+// 断线重连）→ 工具注册（按 --mode 二选一）→ stdio 会话。stdout 被 MCP 协议独占，
+// 一切日志走 stderr（§7.1 红线）。
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { BridgeClient } from './bridgeClient';
+import { ByteRing } from './byteBuffer';
 import { resolveConfig, UsageError } from './config';
 import { RingBuffer } from './lineBuffer';
 import { registerTools } from './tools';
 
-const VERSION = '0.1.1'; // 与 package.json 同步维护（npm 发版前核对）
+const VERSION = '0.2.0'; // 与 package.json 同步维护（npm 发版前核对）
 
 const PREFIX = '[agent-bridge-mcp]';
 const log = (message: string): void => {
@@ -31,10 +33,13 @@ async function main(): Promise<void> {
   }
   log(
     `v${VERSION} starting (name=${config.name} host=${config.host} port=${config.port} readonly=${config.readonly} ` +
-    `maxBytes=${config.maxBytes})`
+    `maxBytes=${config.maxBytes} mode=${config.mode})`
   );
 
+  // 两种缓冲各自独立（§3.6）；只接线当前模式需要的一路——另一路保持空转（对象本身
+  // 无分配，事件无监听者零成本）。
   const ring = new RingBuffer({ maxBytes: config.maxBytes });
+  const byteRing = new ByteRing({ maxBytes: config.maxBytes });
   const bridge = new BridgeClient(config.host, config.port);
   bridge.on('status', connected => {
     log(connected ? `bridge connected (${config.host}:${config.port})` : 'bridge disconnected (reconnecting)');
@@ -42,14 +47,29 @@ async function main(): Promise<void> {
   bridge.on('error', error => {
     log(`bridge error: ${error.message}`);
   });
-  bridge.on('line', line => {
-    ring.push(line);
-  });
+  if (config.mode === 'stream') {
+    bridge.on('chunk', chunk => {
+      byteRing.push(chunk);
+    });
+  } else {
+    bridge.on('line', line => {
+      ring.push(line);
+    });
+  }
   bridge.start();
 
   // MCP 服务器名携带设备标识（initialize 报告 + 宿主 UI 显示实例自描述）。
   const server = new McpServer({ name: `agent-bridge-mcp (${config.name})`, version: VERSION });
-  registerTools(server, { bridge, ring, readonly: config.readonly, name: config.name, host: config.host, port: config.port });
+  registerTools(server, {
+    bridge,
+    ring,
+    byteRing,
+    readonly: config.readonly,
+    name: config.name,
+    host: config.host,
+    port: config.port,
+    mode: config.mode,
+  });
   await server.connect(new StdioServerTransport());
   log('stdio transport connected');
 

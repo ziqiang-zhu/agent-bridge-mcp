@@ -1,7 +1,7 @@
 {
   "name": "agent-bridge-mcp",
-  "version": "0.1.1",
-  "description": "MCP server for the Serial Port Terminal AgentBridge: persistent subscription with a cursor-based line buffer, so agent command cycles never lose device logs",
+  "version": "0.2.0",
+  "description": "MCP server for the Serial Port Terminal AgentBridge: persistent subscription with cursor-based line or byte buffers, so agent command cycles never lose device logs or raw data",
   "license": "MIT",
   "type": "commonjs",
   "bin": {

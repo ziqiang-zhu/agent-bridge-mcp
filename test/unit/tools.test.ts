@@ -6,31 +6,49 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { BridgeClient } from '../../src/bridgeClient';
+import { ByteRing } from '../../src/byteBuffer';
+import type { BridgeMode } from '../../src/config';
 import { RingBuffer } from '../../src/lineBuffer';
 import { registerTools } from '../../src/tools';
 
-// 工具层契约（doc/设计.md §4 / §8.1 #8–#10）：宽容输入（max_lines 超限收敛到 1000、
-// 负值/超限 wait_ms 不报错）、max_lines 截断 + next_cursor 续收、readonly 声明裁剪
-// send 类工具。经 SDK InMemoryTransport 配对走真实 MCP 协议层（握手 + 工具调用），
-// 无 socket、确定性；BridgeClient 不 start（send 路径的连接断言走 isError 通道）。
+// 工具层契约（doc/设计.md §4 / §8.1 #8–#10 / §8.2 #25–#26）：宽容输入（max_lines 超限
+// 收敛到 1000、负值/超限 wait_ms 不报错）、max_lines 截断 + next_cursor 续收、readonly
+// 声明裁剪 send 类工具、--mode 工具集二选一、send_bytes 编码校验。经 SDK InMemoryTransport
+// 配对走真实 MCP 协议层（握手 + 工具调用），无 socket、确定性；BridgeClient 不 start
+// （send 路径的连接断言走 isError 通道）。
 
 interface ToolResult {
   content: { type: string; text: string }[];
   isError?: boolean;
 }
 
-const makePair = async (options: { readonly?: boolean; maxBytes?: number; lines?: string[] } = {}) => {
+const makePair = async (
+  options: { readonly?: boolean; maxBytes?: number; lines?: string[]; mode?: BridgeMode; bytes?: Buffer[] } = {}
+) => {
   const ring = new RingBuffer({ maxBytes: options.maxBytes ?? 10_000_000 });
   for (const line of options.lines ?? []) {
     ring.push(line);
   }
+  const byteRing = new ByteRing({ maxBytes: options.maxBytes ?? 10_000_000 });
+  for (const chunk of options.bytes ?? []) {
+    byteRing.push(chunk);
+  }
   const bridge = new BridgeClient('127.0.0.1', 1); // 不 start：未连接态
   const server = new McpServer({ name: 'agent-bridge-mcp (test-device)', version: '0.1.0-test' });
-  registerTools(server, { bridge, ring, readonly: options.readonly ?? false, name: 'test-device', host: '127.0.0.1', port: 1 });
+  registerTools(server, {
+    bridge,
+    ring,
+    byteRing,
+    readonly: options.readonly ?? false,
+    name: 'test-device',
+    host: '127.0.0.1',
+    port: 1,
+    mode: options.mode ?? 'terminal',
+  });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '0.0.0' });
   await Promise.all([server.connect(clientTransport), client.connect(serverTransport)]);
-  return { client, ring, bridge };
+  return { client, ring, byteRing, bridge };
 };
 
 const callTool = async (client: Client, name: string, args: Record<string, unknown> = {}): Promise<ToolResult> => {
@@ -106,6 +124,44 @@ describe('MCP 工具（read_output / send_line / status）', () => {
     assert.equal(state.name, 'test-device');
     assert.equal(state.connected, false);
     assert.equal(state.host, '127.0.0.1');
+    assert.equal(state.mode, 'terminal');
     assert.deepEqual(state.buffer, { oldest: 1, newest: 2, dropped_total: 0 });
+  });
+
+  it('#25 registers the byte tool set in stream mode and none of the line tools', async () => {
+    const stream = await makePair({ mode: 'stream', bytes: [Buffer.from([0x01, 0x02])] });
+    const tools = (await stream.client.listTools()).tools.map(tool => tool.name).sort();
+    assert.deepEqual(tools, ['read_bytes', 'send_bytes', 'status']);
+    const state = payload(await callTool(stream.client, 'status'));
+    assert.equal(state.mode, 'stream');
+    assert.deepEqual(state.buffer, { oldest_offset: 0, newest_offset: 2, dropped_bytes: 0 });
+    // readonly：send_bytes 同样不注册（send_line / send_bytes 一视同仁）
+    const readonlyStream = await makePair({ mode: 'stream', readonly: true });
+    const readonlyTools = (await readonlyStream.client.listTools()).tools.map(tool => tool.name).sort();
+    assert.deepEqual(readonlyTools, ['read_bytes', 'status']);
+  });
+
+  it('#26 validates send_bytes payload encoding before touching the bridge', async () => {
+    const { client } = await makePair({ mode: 'stream' });
+    const odd = await callTool(client, 'send_bytes', { data: 'abc' });
+    assert.equal(odd.isError, true);
+    assert.match(odd.content[0]?.text ?? '', /even number/);
+    const badHex = await callTool(client, 'send_bytes', { data: 'zz' });
+    assert.equal(badHex.isError, true);
+    assert.match(badHex.content[0]?.text ?? '', /invalid characters/);
+    const badBase64 = await callTool(client, 'send_bytes', { data: 'a', encoding: 'base64' });
+    assert.equal(badBase64.isError, true);
+    assert.match(badBase64.content[0]?.text ?? '', /base64/);
+    const badEncoding = await callTool(client, 'send_bytes', { data: '00', encoding: 'octal' });
+    assert.equal(badEncoding.isError, true);
+    assert.match(badEncoding.content[0]?.text ?? '', /unsupported encoding/);
+    // 合法 payload（hex 与 base64）通过解码 → 未连接桥时走「bridge not connected」
+    // （证明失败点是连接、不是编码）
+    const validHex = await callTool(client, 'send_bytes', { data: '55 85 11 94' });
+    assert.equal(validHex.isError, true);
+    assert.match(validHex.content[0]?.text ?? '', /bridge not connected/);
+    const validBase64 = await callTool(client, 'send_bytes', { data: 'VYURlA==', encoding: 'base64' });
+    assert.equal(validBase64.isError, true);
+    assert.match(validBase64.content[0]?.text ?? '', /bridge not connected/);
   });
 });

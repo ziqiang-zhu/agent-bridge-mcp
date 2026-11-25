@@ -4,6 +4,8 @@
 // （先于 status 下行，保证缓冲先收完再翻状态，§3.4）。桥不可达时进程保持存活，
 // 重连循环持续；stop() 为收尾语义（停止重连并断开，MCP 服务器关闭时调用）。
 // connectNow() 查询即挂接（§3.3）：断开态立即尝试一次连接并等待定格（≤300ms）。
+// 事件：'chunk'（原始 Buffer，两模式都发，stream 模式字节环用）/ 'line'（组装后的行，
+// terminal 模式行环用）/ 'status' / 'error'。
 import { EventEmitter } from 'node:events';
 import { Socket } from 'node:net';
 import { LineAssembler } from './lineBuffer';
@@ -131,6 +133,9 @@ export class BridgeClient extends EventEmitter {
       this.emit('status', true);
     });
     socket.on('data', (chunk: Buffer) => {
+      // 原始字节事件（stream 模式字节环的数据源）：两模式都发——terminal 模式无监听者，
+      // 零成本；stream 模式据此保持二进制保真（不经 TextDecoder、不切行，§3.6）。
+      this.emit('chunk', chunk);
       const assembler = this.assembler;
       if (assembler === undefined) {
         return;
