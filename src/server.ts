@@ -10,8 +10,7 @@ import { ByteRing } from './byteBuffer';
 import { resolveConfig, UsageError } from './config';
 import { RingBuffer } from './lineBuffer';
 import { registerTools } from './tools';
-
-const VERSION = '0.2.0'; // 与 package.json 同步维护（npm 发版前核对）
+import { VERSION } from './version';
 
 const PREFIX = '[agent-bridge-mcp]';
 const log = (message: string): void => {

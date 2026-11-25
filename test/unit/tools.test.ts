@@ -125,6 +125,10 @@ describe('MCP 工具（read_output / send_line / status）', () => {
     assert.equal(state.connected, false);
     assert.equal(state.host, '127.0.0.1');
     assert.equal(state.mode, 'terminal');
+    // 版本与更新感知（§4）：version 供 Agent 对比 GitHub 最新 tag；测试构建的
+    // 输出目录下没有 package.json → update_pending 恒为 false（不误报）。
+    assert.match(String(state.version), /^\d+\.\d+\.\d+$/);
+    assert.equal(state.update_pending, false);
     assert.deepEqual(state.buffer, { oldest: 1, newest: 2, dropped_total: 0 });
   });
 

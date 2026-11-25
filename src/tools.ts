@@ -20,6 +20,7 @@ import { BridgeClient } from './bridgeClient';
 import { ByteRing } from './byteBuffer';
 import { RingBuffer } from './lineBuffer';
 import type { BridgeMode } from './config';
+import { VERSION, isUpdatePending } from './version';
 
 const WAIT_MS_MAX = 30000;
 const MAX_LINES_MAX = 1000;
@@ -237,7 +238,9 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
     {
       description:
         `Report the state of device '${name}': the connection to its AgentBridge (host, port, ` +
-        'connected, mode) and the buffer state (line mode: oldest/newest seq and total dropped ' +
+        'connected, mode), the running server version (use it to compare against the latest GitHub ' +
+        'tag when checking for updates), whether an on-disk update is waiting for a host reload ' +
+        '(update_pending), and the buffer state (line mode: oldest/newest seq and total dropped ' +
         'lines; stream mode: oldest/newest byte offsets and dropped bytes). When disconnected, the ' +
         'call first attempts to connect immediately (bypassing the reconnect backoff) and reports ' +
         'the resulting state.',
@@ -255,6 +258,8 @@ export function registerTools(server: McpServer, deps: ToolDeps): void {
       return {
         content: text({
           name,
+          version: VERSION,
+          update_pending: isUpdatePending(),
           mode: deps.mode,
           connected: bridge.connected,
           host: deps.host,
